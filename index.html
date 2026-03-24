@@ -95,7 +95,18 @@ try {
   if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
   db = firebase.firestore();
   auth = firebase.auth();
-  db.enablePersistence({ synchronizeTabs: true }).catch(()=>{});
+
+  // ── Fix critique PWA + Service Worker ───────────────────────────
+  // Le WebChannel Firestore (streaming HTTP/2) entre en conflit avec
+  // le SW en mode standalone PWA → erreur NOT_FOUND cpt1::xxxx.
+  // La solution est de forcer le long-polling (requêtes HTTP simples).
+  db.settings({ experimentalForceLongPolling: true, merge: true });
+
+  db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
+    if (err.code !== "failed-precondition" && err.code !== "unimplemented") {
+      console.warn("[Firebase] enablePersistence:", err.code);
+    }
+  });
 } catch(e) { console.warn(e); }
 
 const DEV_PIN = "761278";
@@ -1399,7 +1410,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />);
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("./sw.js", { scope: "./" })
+        .register("./sw.js", { scope: "/" })
         .then((reg) => {
           console.log("[PWA] SW enregistré – scope :", reg.scope);
 

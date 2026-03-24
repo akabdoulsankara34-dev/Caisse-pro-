@@ -3,7 +3,7 @@
 //  DIGITALE SOLUTION · Ouagadougou, Burkina Faso
 // ════════════════════════════════════════════════════════════════════
 
-const CACHE_VERSION = "caisse-pro-v2";
+const CACHE_VERSION = "caisse-pro-v3";
 const SHELL_CACHE   = `${CACHE_VERSION}-shell`;
 const CDN_CACHE     = `${CACHE_VERSION}-cdn`;
 const FONTS_CACHE   = `${CACHE_VERSION}-fonts`;
