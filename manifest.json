@@ -4,7 +4,7 @@
   "description": "Caisse enregistreuse SaaS avec impression BLE – DIGITALE SOLUTION",
   "lang": "fr",
   "dir": "ltr",
-  "start_url": "/caisse_pro_5.html",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
@@ -31,7 +31,7 @@
       "name": "Ouvrir la caisse",
       "short_name": "Caisse",
       "description": "Accès direct à la vue caisse",
-      "url": "/caisse_pro_5.html",
+      "url": "/",
       "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
     }
   ]
