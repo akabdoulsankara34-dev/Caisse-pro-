@@ -1,26 +1,19 @@
 // ════════════════════════════════════════════════════════════════════
-//  Caisse SaaS Pro – Service Worker
+//  Caisse SaaS Pro – Service Worker  v2
 //  DIGITALE SOLUTION · Ouagadougou, Burkina Faso
-//  Stratégies :
-//    · App shell (HTML)         → Cache-first + revalidation bg
-//    · CDN (React/Firebase/…)   → Cache-first (URLs versionnées)
-//    · Google Fonts             → Cache-first (longue durée)
-//    · Firebase REST / API      → Network-only (Firebase gère son offline)
-//    · Tout le reste            → Network-first avec fallback cache
 // ════════════════════════════════════════════════════════════════════
 
-const CACHE_VERSION  = "caisse-pro-v1";
-const SHELL_CACHE    = `${CACHE_VERSION}-shell`;
-const CDN_CACHE      = `${CACHE_VERSION}-cdn`;
-const FONTS_CACHE    = `${CACHE_VERSION}-fonts`;
-const RUNTIME_CACHE  = `${CACHE_VERSION}-runtime`;
+const CACHE_VERSION = "caisse-pro-v2";
+const SHELL_CACHE   = `${CACHE_VERSION}-shell`;
+const CDN_CACHE     = `${CACHE_VERSION}-cdn`;
+const FONTS_CACHE   = `${CACHE_VERSION}-fonts`;
+const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
-// ── Ressources à pré-cacher à l'installation ──────────────────────
 const SHELL_ASSETS = [
-  "./caisse_pro_5.html",
-  "./manifest.json",
-  "./icon-192.png",
-  "./icon-512.png",
+  "/caisse_pro_5.html",
+  "/manifest.json",
+  "/icon-192.png",
+  "/icon-512.png",
 ];
 
 const CDN_ASSETS = [
@@ -32,73 +25,45 @@ const CDN_ASSETS = [
   "https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js",
 ];
 
-// ── Helpers ───────────────────────────────────────────────────────
-function isFirebaseRequest(url) {
-  return (
-    url.includes("firestore.googleapis.com") ||
-    url.includes("firebase.googleapis.com") ||
-    url.includes("identitytoolkit.googleapis.com") ||
-    url.includes("securetoken.googleapis.com")
-  );
-}
+// ── Domaines à NE JAMAIS intercepter (Firebase + Google) ──────────
+const PASSTHROUGH_PATTERNS = [
+  "firestore.googleapis.com",
+  "firebase.googleapis.com",
+  "firebaseio.com",
+  "firebaseapp.com",
+  "identitytoolkit.googleapis.com",
+  "securetoken.googleapis.com",
+  "googleapis.com",
+  "google.com",
+  "accounts.google.com",
+];
 
-function isCdnRequest(url) {
-  return (
-    url.includes("cdnjs.cloudflare.com") ||
-    url.includes("unpkg.com") ||
-    url.includes("cdn.jsdelivr.net")
-  );
+function isPassthrough(url) {
+  return PASSTHROUGH_PATTERNS.some((p) => url.includes(p));
 }
-
-function isFontRequest(url) {
-  return (
-    url.includes("fonts.googleapis.com") ||
-    url.includes("fonts.gstatic.com")
-  );
+function isCdn(url) {
+  return url.includes("cdnjs.cloudflare.com") || url.includes("unpkg.com") || url.includes("cdn.jsdelivr.net");
+}
+function isFont(url) {
+  return url.includes("fonts.googleapis.com") || url.includes("fonts.gstatic.com");
 }
 
 // ── INSTALL ───────────────────────────────────────────────────────
 self.addEventListener("install", (event) => {
-  console.log("[SW] Install – mise en cache du shell et des CDN");
   event.waitUntil(
     Promise.all([
-      // Shell : HTML + icônes + manifest
-      caches.open(SHELL_CACHE).then((cache) =>
-        cache.addAll(SHELL_ASSETS).catch((err) => {
-          console.warn("[SW] Shell cache partiel :", err);
-        })
-      ),
-      // CDN : scripts versionnés (tolère les erreurs réseau au premier install)
-      caches.open(CDN_CACHE).then((cache) =>
-        Promise.allSettled(
-          CDN_ASSETS.map((url) =>
-            cache.add(url).catch((e) =>
-              console.warn("[SW] CDN non mis en cache :", url, e)
-            )
-          )
-        )
-      ),
+      caches.open(SHELL_CACHE).then((c) => c.addAll(SHELL_ASSETS).catch((e) => console.warn("[SW] shell partiel :", e))),
+      caches.open(CDN_CACHE).then((c) => Promise.allSettled(CDN_ASSETS.map((url) => c.add(url).catch(() => {})))),
     ]).then(() => self.skipWaiting())
   );
 });
 
 // ── ACTIVATE ─────────────────────────────────────────────────────
 self.addEventListener("activate", (event) => {
-  console.log("[SW] Activate – nettoyage des anciens caches");
-  const validCaches = [SHELL_CACHE, CDN_CACHE, FONTS_CACHE, RUNTIME_CACHE];
+  const valid = [SHELL_CACHE, CDN_CACHE, FONTS_CACHE, RUNTIME_CACHE];
   event.waitUntil(
-    caches
-      .keys()
-      .then((keys) =>
-        Promise.all(
-          keys
-            .filter((key) => !validCaches.includes(key))
-            .map((key) => {
-              console.log("[SW] Suppression du cache obsolète :", key);
-              return caches.delete(key);
-            })
-        )
-      )
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((k) => !valid.includes(k)).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -108,88 +73,36 @@ self.addEventListener("fetch", (event) => {
   const { request } = event;
   const url = request.url;
 
-  // Ignorer les requêtes non GET
   if (request.method !== "GET") return;
-
-  // ── 1. Firebase / Firestore → Network-only ──────────────────────
-  //    Firebase SDK gère lui-même la persistance offline (enablePersistence)
-  if (isFirebaseRequest(url)) return;
-
-  // ── 2. CDN versionnés → Cache-first ─────────────────────────────
-  if (isCdnRequest(url)) {
-    event.respondWith(cacheFirst(request, CDN_CACHE));
-    return;
-  }
-
-  // ── 3. Google Fonts → Cache-first ───────────────────────────────
-  if (isFontRequest(url)) {
-    event.respondWith(cacheFirst(request, FONTS_CACHE));
-    return;
-  }
-
-  // ── 4. App shell (HTML/manifest/icônes) → Stale-while-revalidate
-  const isShellAsset = SHELL_ASSETS.some((asset) =>
-    url.endsWith(asset.replace("./", "/"))
-  );
-  if (isShellAsset || url.endsWith(".html")) {
+  if (isPassthrough(url)) return;          // Firebase / Google → laisse passer
+  if (isCdn(url)) { event.respondWith(cacheFirst(request, CDN_CACHE)); return; }
+  if (isFont(url)) { event.respondWith(cacheFirst(request, FONTS_CACHE)); return; }
+  if (url.endsWith(".html") || url.endsWith("manifest.json") || url.endsWith("icon-192.png") || url.endsWith("icon-512.png")) {
     event.respondWith(staleWhileRevalidate(request, SHELL_CACHE));
     return;
   }
-
-  // ── 5. Tout le reste → Network-first + fallback cache ───────────
   event.respondWith(networkFirst(request, RUNTIME_CACHE));
 });
 
-// ════════════════════════════════════════════════════════════════════
-//  Stratégies
-// ════════════════════════════════════════════════════════════════════
-
-/** Cache-first : renvoie le cache, sinon réseau (puis met en cache) */
-async function cacheFirst(request, cacheName) {
-  const cache    = await caches.open(cacheName);
-  const cached   = await cache.match(request);
-  if (cached) return cached;
-  try {
-    const response = await fetch(request);
-    if (response.ok) cache.put(request, response.clone());
-    return response;
-  } catch (err) {
-    console.warn("[SW] CacheFirst – hors ligne et pas de cache pour :", request.url);
-    return new Response("Hors ligne – ressource non disponible", { status: 503 });
-  }
-}
-
-/** Stale-while-revalidate : répond immédiatement depuis le cache, rafraîchit en arrière-plan */
-async function staleWhileRevalidate(request, cacheName) {
-  const cache    = await caches.open(cacheName);
-  const cached   = await cache.match(request);
-
-  // Lance le fetch en arrière-plan quelle que soit la situation
-  const fetchPromise = fetch(request)
-    .then((response) => {
-      if (response.ok) cache.put(request, response.clone());
-      return response;
-    })
-    .catch(() => null);
-
-  return cached || fetchPromise;
-}
-
-/** Network-first : essaie le réseau, repli sur le cache */
-async function networkFirst(request, cacheName) {
+async function cacheFirst(req, cacheName) {
   const cache = await caches.open(cacheName);
-  try {
-    const response = await fetch(request);
-    if (response.ok) cache.put(request, response.clone());
-    return response;
-  } catch {
-    const cached = await cache.match(request);
-    if (cached) return cached;
-    return new Response("Hors ligne – ressource non disponible", { status: 503 });
-  }
+  const cached = await cache.match(req);
+  if (cached) return cached;
+  try { const res = await fetch(req); if (res.ok) cache.put(req, res.clone()); return res; }
+  catch { return new Response("Hors ligne", { status: 503 }); }
 }
 
-// ── MESSAGE : forcer la mise à jour ──────────────────────────────
-self.addEventListener("message", (event) => {
-  if (event.data === "SKIP_WAITING") self.skipWaiting();
-});
+async function staleWhileRevalidate(req, cacheName) {
+  const cache = await caches.open(cacheName);
+  const cached = await cache.match(req);
+  const fetchP = fetch(req).then((res) => { if (res.ok) cache.put(req, res.clone()); return res; }).catch(() => null);
+  return cached || fetchP;
+}
+
+async function networkFirst(req, cacheName) {
+  const cache = await caches.open(cacheName);
+  try { const res = await fetch(req); if (res.ok) cache.put(req, res.clone()); return res; }
+  catch { const cached = await cache.match(req); return cached || new Response("Hors ligne", { status: 503 }); }
+}
+
+self.addEventListener("message", (e) => { if (e.data === "SKIP_WAITING") self.skipWaiting(); });
