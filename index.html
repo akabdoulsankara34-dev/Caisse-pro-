@@ -1401,36 +1401,22 @@ function DevDashboard({ T, themeName, setThemeName, logout, flashMsg }) {
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 
-<!-- ════════════════════════════════════════════════════════════
-     PWA – Enregistrement du Service Worker + Bannière install
-═════════════════════════════════════════════════════════════ -->
+<!-- ══════════════════════════════════════════════════════════
+     PWA – Bannière install + Désinstallation SW legacy
+═══════════════════════════════════════════════════════════ -->
 <script>
 (function() {
-  // ── Service Worker ────────────────────────────────────────────
-  if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker
-        .register("./sw.js", { scope: "/" })
-        .then((reg) => {
-          console.log("[PWA] SW enregistré – scope :", reg.scope);
 
-          // Détecte une mise à jour disponible et propose le rechargement
-          reg.addEventListener("updatefound", () => {
-            const newWorker = reg.installing;
-            newWorker.addEventListener("statechange", () => {
-              if (
-                newWorker.state === "installed" &&
-                navigator.serviceWorker.controller
-              ) {
-                if (confirm("🔄 Mise à jour disponible – recharger ?")) {
-                  newWorker.postMessage("SKIP_WAITING");
-                  window.location.reload();
-                }
-              }
-            });
-          });
-        })
-        .catch((err) => console.warn("[PWA] SW non enregistré :", err));
+  // ── Désinstaller tous les anciens Service Workers ─────────────
+  // Les versions précédentes de la PWA utilisaient un SW qui
+  // interférait avec les WebChannels Firebase → NOT_FOUND cpt1::
+  // On les supprime définitivement au démarrage.
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.getRegistrations().then((regs) => {
+      regs.forEach((reg) => {
+        reg.unregister();
+        console.log("[PWA] SW désinstallé :", reg.scope);
+      });
     });
   }
 
@@ -1441,7 +1427,6 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />);
     e.preventDefault();
     deferredPrompt = e;
 
-    // Affiche la bannière après 4 secondes si l'app n'est pas déjà installée
     setTimeout(() => {
       if (!deferredPrompt) return;
       const banner = document.createElement("div");
@@ -1454,8 +1439,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />);
         display: "flex", alignItems: "center", gap: "12px",
         zIndex: "9999", boxShadow: "0 8px 32px rgba(0,0,0,.6)",
         fontSize: "13px", fontFamily: "'DM Mono', monospace",
-        color: "#E8E4DA", maxWidth: "340px", width: "90%",
-        animation: "slideUp .35s ease"
+        color: "#E8E4DA", maxWidth: "340px", width: "90%"
       });
       banner.innerHTML = `
         <img src="icon-192.png" width="36" height="36"
@@ -1476,21 +1460,12 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />);
           ✕
         </button>`;
 
-      // Ajoute l'animation dans le style global
-      if (!document.getElementById("pwa-anim-style")) {
-        const s = document.createElement("style");
-        s.id = "pwa-anim-style";
-        s.textContent = `@keyframes slideUp{from{opacity:0;transform:translateX(-50%) translateY(20px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}`;
-        document.head.appendChild(s);
-      }
-
       document.body.appendChild(banner);
 
       document.getElementById("pwa-install-btn").addEventListener("click", async () => {
         banner.remove();
         deferredPrompt.prompt();
-        const { outcome } = await deferredPrompt.userChoice;
-        console.log("[PWA] Install choice :", outcome);
+        await deferredPrompt.userChoice;
         deferredPrompt = null;
       });
 
@@ -1501,13 +1476,12 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />);
     }, 4000);
   });
 
-  // Masque la bannière si l'app est déjà lancée en mode standalone
   window.addEventListener("appinstalled", () => {
     deferredPrompt = null;
     const b = document.getElementById("pwa-install-banner");
     if (b) b.remove();
-    console.log("[PWA] App installée avec succès !");
   });
+
 })();
 </script>
 </body>
