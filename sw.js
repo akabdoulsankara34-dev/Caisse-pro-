@@ -14,9 +14,10 @@ const RUNTIME_CACHE  = `caisse-runtime-${APP_VERSION}`;
 
 /* ── Ressources à précacher au moment de l'install ─────────────── */
 const SHELL_ASSETS = [
-  "./index.html",
-  "./icon-192.png",
-  "./icon-512.png",
+  "/",
+  "/index.html",
+  "/icon-192.png",
+  "/icon-512.png",
 ];
 
 /* ── Domaines CDN à mettre en SWR ──────────────────────────────── */
