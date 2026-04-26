@@ -70,6 +70,29 @@ button:active{opacity:.72!important;transform:scale(.96)!important}
   .mobile-cart-overlay { display: none !important; }
 }
 .mobile-cart-fab { display: none; }
+
+/* ══════════════════════════════════════════════════════════════
+   FIX TEXTES INVISIBLES – iOS Safari & Android Chrome
+   Safari ignore la prop CSS "color" sur les <input> et utilise
+   "-webkit-text-fill-color" à la place → texte noir sur fond noir.
+   On force l'héritage de la couleur parente sur tous les champs.
+══════════════════════════════════════════════════════════════ */
+input,select,textarea{
+  color:inherit !important;
+  -webkit-text-fill-color:inherit !important;
+  background-clip:padding-box; /* empêche Safari d'autocolorer le bg */
+}
+input::placeholder,textarea::placeholder{
+  opacity:0.55;
+  -webkit-text-fill-color:currentColor !important;
+}
+/* Empêche iOS de surligner en jaune les champs auto-remplis */
+input:-webkit-autofill,
+input:-webkit-autofill:focus{
+  -webkit-text-fill-color:inherit !important;
+  box-shadow:0 0 0 1000px transparent inset !important;
+  transition:background-color 5000s ease-in-out 0s;
+}
 </style>
 </head>
 <body>
@@ -1402,25 +1425,57 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 
 <!-- ══════════════════════════════════════════════════════════
-     PWA – Bannière install + Désinstallation SW legacy
+     PWA – Service Worker + Manifest inline + Bannière install
 ═══════════════════════════════════════════════════════════ -->
 <script>
 (function() {
 
-  // ── Désinstaller tous les anciens Service Workers ─────────────
-  // Les versions précédentes de la PWA utilisaient un SW qui
-  // interférait avec les WebChannels Firebase → NOT_FOUND cpt1::
-  // On les supprime définitivement au démarrage.
+  // ── 1. Manifest inline (blob URL) ────────────────────────────
+  // Injecte le manifest directement depuis le JS pour éviter
+  // l'erreur "manifest.json not found" quand le fichier est absent.
+  try {
+    const manifestData = {
+      name: "Caisse SaaS Pro",
+      short_name: "Caisse Pro",
+      description: "Caisse enregistreuse SaaS – impression BLE – DIGITALE SOLUTION",
+      start_url: "./",
+      display: "standalone",
+      background_color: "#0A0E12",
+      theme_color: "#0A0E12",
+      orientation: "portrait-primary",
+      icons: [
+        { src: "icon-192.png", sizes: "192x192", type: "image/png", purpose: "any maskable" },
+        { src: "icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" }
+      ]
+    };
+    const mBlob = new Blob([JSON.stringify(manifestData)], { type: "application/manifest+json" });
+    const mURL  = URL.createObjectURL(mBlob);
+    const mLink = document.querySelector("link[rel='manifest']");
+    if (mLink) mLink.href = mURL;
+  } catch(e) { console.warn("[PWA] manifest inline:", e); }
+
+  // ── 2. Service Worker ─────────────────────────────────────────
+  // On enregistre sw.js (fichier à placer dans le même dossier).
+  // Ce SW est conçu pour NE PAS intercepter les requêtes Firebase
+  // → résout l'erreur NOT_FOUND cpt1::xxxx en mode standalone PWA.
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.getRegistrations().then((regs) => {
+      // Désinstalle les anciens SW qui n'ont PAS la bonne version
       regs.forEach((reg) => {
-        reg.unregister();
-        console.log("[PWA] SW désinstallé :", reg.scope);
+        const isLegacy = !reg.active || !reg.active.scriptURL.includes("sw.js");
+        if (isLegacy) {
+          reg.unregister();
+          console.log("[PWA] Ancien SW supprimé :", reg.scope);
+        }
       });
     });
+
+    navigator.serviceWorker.register("./sw.js")
+      .then((reg) => console.log("[PWA] SW enregistré :", reg.scope))
+      .catch((err) => console.warn("[PWA] SW échec :", err.message));
   }
 
-  // ── Bannière « Ajouter à l'écran d'accueil » ─────────────────
+  // ── 3. Bannière « Ajouter à l'écran d'accueil » ──────────────
   let deferredPrompt = null;
 
   window.addEventListener("beforeinstallprompt", (e) => {

@@ -1,168 +1,104 @@
-/* ================================================================
-   sw.js – Caisse SaaS Pro | DIGITALE SOLUTION
-   Stratégies :
-     • App Shell (HTML + icônes)  → Cache First
-     • CDN tiers (Firebase, React, Fonts) → Stale-While-Revalidate
-     • Firebase API / Firestore   → Network First (offline : cache)
-     • Tout le reste              → Network First
-   ================================================================ */
+// ══════════════════════════════════════════════════════════════════
+//  CAISSE SAAS PRO – Service Worker v2
+//  Compatible Firebase Firestore (long-polling)
+//  ⚠️  Ce fichier doit être placé dans le MÊME dossier que index.html
+// ══════════════════════════════════════════════════════════════════
 
-const APP_VERSION    = "v1.0.0";
-const SHELL_CACHE    = `caisse-shell-${APP_VERSION}`;
-const CDN_CACHE      = `caisse-cdn-${APP_VERSION}`;
-const RUNTIME_CACHE  = `caisse-runtime-${APP_VERSION}`;
+const CACHE_NAME = "caisse-pro-v2";
 
-/* ── Ressources à précacher au moment de l'install ─────────────── */
-const SHELL_ASSETS = [
-  "/",
-  "/index.html",
-  "/icon-192.png",
-  "/icon-512.png",
-];
-
-/* ── Domaines CDN à mettre en SWR ──────────────────────────────── */
-const CDN_HOSTS = [
-  "cdnjs.cloudflare.com",
-  "fonts.googleapis.com",
+// Domaines Firebase à NE JAMAIS intercepter
+// (le long-polling Firestore explose si le SW le capture)
+const FIREBASE_BYPASS = [
+  "firestore.googleapis.com",
+  "firebase.googleapis.com",
+  "firebaseio.com",
+  "firebasestorage.app",
+  "identitytoolkit.googleapis.com",
+  "securetoken.googleapis.com",
+  "www.googleapis.com",
+  "cloudflare.com",          // CDN des libs React/Firebase/Babel
+  "fonts.googleapis.com",    // Google Fonts
   "fonts.gstatic.com",
 ];
 
-/* ── Domaines Firebase (Network First) ─────────────────────────── */
-const FIREBASE_HOSTS = [
-  "firestore.googleapis.com",
-  "identitytoolkit.googleapis.com",
-  "securetoken.googleapis.com",
-  "firebase.googleapis.com",
+// Ressources à pré-cacher au démarrage (app shell)
+const PRECACHE_URLS = [
+  "./",
+  "./index.html",
 ];
 
-// ================================================================
-//  INSTALL – précache du shell
-// ================================================================
-self.addEventListener("install", (event) => {
-  console.log(`[SW] Install – ${SHELL_CACHE}`);
-  event.waitUntil(
-    caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_ASSETS))
+// ── INSTALL ───────────────────────────────────────────────────────
+self.addEventListener("install", (e) => {
+  console.log("[SW] Install v2");
+  self.skipWaiting(); // active immédiatement le nouveau SW
+  e.waitUntil(
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => cache.addAll(PRECACHE_URLS))
+      .catch((err) => console.warn("[SW] Précache échoué :", err))
   );
-  // Prend le contrôle immédiatement (sans attendre le rechargement)
-  self.skipWaiting();
 });
 
-// ================================================================
-//  ACTIVATE – purge des anciens caches
-// ================================================================
-self.addEventListener("activate", (event) => {
-  console.log(`[SW] Activate – ${APP_VERSION}`);
-  const VALID = [SHELL_CACHE, CDN_CACHE, RUNTIME_CACHE];
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys
-          .filter((k) => !VALID.includes(k))
-          .map((k) => {
-            console.log(`[SW] Suppression ancien cache : ${k}`);
-            return caches.delete(k);
-          })
+// ── ACTIVATE ──────────────────────────────────────────────────────
+self.addEventListener("activate", (e) => {
+  console.log("[SW] Activate v2");
+  e.waitUntil(
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(
+          keys
+            .filter((k) => k !== CACHE_NAME) // supprime les anciens caches
+            .map((k) => {
+              console.log("[SW] Suppression ancien cache :", k);
+              return caches.delete(k);
+            })
+        )
       )
-    )
+      .then(() => self.clients.claim()) // prend le contrôle immédiatement
   );
-  // Contrôle toutes les pages ouvertes immédiatement
-  self.clients.claim();
 });
 
-// ================================================================
-//  FETCH – routage des requêtes
-// ================================================================
-self.addEventListener("fetch", (event) => {
-  const { request } = event;
-  const url = new URL(request.url);
+// ── FETCH ─────────────────────────────────────────────────────────
+self.addEventListener("fetch", (e) => {
+  const url = new URL(e.request.url);
 
-  // Ignore les requêtes non-GET et les extensions navigateur
-  if (request.method !== "GET") return;
-  if (!["http:", "https:"].includes(url.protocol)) return;
-
-  // ── 1. Shell (HTML + icônes) → Cache First ──────────────────
-  if (SHELL_ASSETS.some((a) => request.url.endsWith(a.replace("./", "")))) {
-    event.respondWith(cacheFirst(request, SHELL_CACHE));
+  // ① Ne jamais intercepter Firebase / CDN externes
+  if (FIREBASE_BYPASS.some((domain) => url.hostname.includes(domain))) {
+    // On ne fait RIEN → le navigateur envoie la requête normalement
     return;
   }
 
-  // ── 2. Firebase Firestore / Auth → Network First ────────────
-  if (FIREBASE_HOSTS.some((h) => url.hostname.includes(h))) {
-    event.respondWith(networkFirst(request, RUNTIME_CACHE));
+  // ② Requêtes non-GET → réseau uniquement (POST, etc.)
+  if (e.request.method !== "GET") {
     return;
   }
 
-  // ── 3. CDN tiers → Stale-While-Revalidate ───────────────────
-  if (CDN_HOSTS.some((h) => url.hostname.includes(h))) {
-    event.respondWith(staleWhileRevalidate(request, CDN_CACHE));
-    return;
-  }
-
-  // ── 4. Reste → Network First avec fallback cache ────────────
-  event.respondWith(networkFirst(request, RUNTIME_CACHE));
+  // ③ Tout le reste : réseau d'abord, cache en fallback
+  e.respondWith(
+    fetch(e.request)
+      .then((response) => {
+        // Mise en cache des réponses OK
+        if (response && response.ok && response.type !== "opaque") {
+          const clone = response.clone();
+          caches
+            .open(CACHE_NAME)
+            .then((cache) => cache.put(e.request, clone))
+            .catch(() => {});
+        }
+        return response;
+      })
+      .catch(() => {
+        // Hors-ligne → fallback sur le cache
+        return caches.match(e.request).then(
+          (cached) =>
+            cached ||
+            new Response("Hors ligne – vérifiez votre connexion", {
+              status: 503,
+              statusText: "Service Unavailable",
+              headers: { "Content-Type": "text/plain; charset=utf-8" },
+            })
+        );
+      })
+  );
 });
-
-// ================================================================
-//  Message : rechargement forcé après mise à jour
-// ================================================================
-self.addEventListener("message", (event) => {
-  if (event.data === "SKIP_WAITING") {
-    self.skipWaiting();
-  }
-});
-
-// ================================================================
-//  STRATÉGIES
-// ================================================================
-
-/** Cache First – retourne le cache, sinon réseau puis mise en cache */
-async function cacheFirst(request, cacheName) {
-  const cache    = await caches.open(cacheName);
-  const cached   = await cache.match(request);
-  if (cached) return cached;
-
-  try {
-    const response = await fetch(request);
-    if (response.ok) cache.put(request, response.clone());
-    return response;
-  } catch {
-    return new Response("Hors ligne – ressource non disponible", { status: 503 });
-  }
-}
-
-/** Network First – réseau d'abord, fallback cache, puis offline page */
-async function networkFirst(request, cacheName) {
-  const cache = await caches.open(cacheName);
-  try {
-    const response = await fetch(request);
-    if (response.ok) cache.put(request, response.clone());
-    return response;
-  } catch {
-    const cached = await cache.match(request);
-    if (cached) return cached;
-
-    // Fallback HTML pour la navigation offline
-    if (request.destination === "document") {
-      const shell = await caches.match("./index.html");
-      if (shell) return shell;
-    }
-    return new Response(
-      JSON.stringify({ error: "offline" }),
-      { status: 503, headers: { "Content-Type": "application/json" } }
-    );
-  }
-}
-
-/** Stale-While-Revalidate – retourne le cache ET met à jour en arrière-plan */
-async function staleWhileRevalidate(request, cacheName) {
-  const cache  = await caches.open(cacheName);
-  const cached = await cache.match(request);
-
-  // Lancement de la mise à jour en arrière-plan (sans await)
-  const networkPromise = fetch(request).then((response) => {
-    if (response.ok) cache.put(request, response.clone());
-    return response;
-  });
-
-  return cached || networkPromise;
-}
