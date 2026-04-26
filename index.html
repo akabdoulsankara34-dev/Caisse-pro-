@@ -73,25 +73,26 @@ button:active{opacity:.72!important;transform:scale(.96)!important}
 
 /* ══════════════════════════════════════════════════════════════
    FIX TEXTES INVISIBLES – iOS Safari & Android Chrome
-   Safari ignore la prop CSS "color" sur les <input> et utilise
-   "-webkit-text-fill-color" à la place → texte noir sur fond noir.
-   On force l'héritage de la couleur parente sur tous les champs.
+   ① body.style.color = T.text  (propagé via JS à chaque thème)
+   ② Les inputs héritent via color:inherit
+   ③ -webkit-text-fill-color:inherit corrige Safari qui ignorait "color"
+   ④ L'autofill jaune iOS est neutralisé
 ══════════════════════════════════════════════════════════════ */
-input,select,textarea{
+input,select,textarea,button{
   color:inherit !important;
   -webkit-text-fill-color:inherit !important;
-  background-clip:padding-box; /* empêche Safari d'autocolorer le bg */
 }
 input::placeholder,textarea::placeholder{
-  opacity:0.55;
-  -webkit-text-fill-color:currentColor !important;
+  opacity:0.5;
+  color:inherit;
+  -webkit-text-fill-color:inherit;
 }
-/* Empêche iOS de surligner en jaune les champs auto-remplis */
-input:-webkit-autofill,
-input:-webkit-autofill:focus{
+input:-webkit-autofill,input:-webkit-autofill:focus,
+input:-webkit-autofill:hover,input:-webkit-autofill:active{
   -webkit-text-fill-color:inherit !important;
+  caret-color:inherit;
   box-shadow:0 0 0 1000px transparent inset !important;
-  transition:background-color 5000s ease-in-out 0s;
+  transition:background-color 9999s ease 0s;
 }
 </style>
 </head>
@@ -691,7 +692,15 @@ function App() {
   
   const flashMsg = (msg) => { setFlash(msg); setTimeout(()=>setFlash(null),2500); };
 
-  useEffect(()=>{ document.body.style.background = T.bg; localStorage.setItem("pos_theme", themeName); }, [themeName]);
+  useEffect(()=>{
+    document.body.style.background = T.bg;
+    // Fix textes invisibles : iOS Safari lit -webkit-text-fill-color
+    // et ignore "color". On propage la couleur du thème sur le body
+    // pour que les inputs héritent correctement via la CSS globale.
+    document.body.style.color = T.text;
+    document.body.style.webkitTextFillColor = T.text;
+    localStorage.setItem("pos_theme", themeName);
+  }, [themeName]);
 
   const handleLogoTripleClick = () => {
     const ref = clickCountRef.current;
